@@ -254,6 +254,14 @@ private fun VolumeCard(
         state.message?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
+        state.debug?.let {
+            Text(
+                it,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         if (!state.supported) {
             Text(

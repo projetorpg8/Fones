@@ -29,6 +29,7 @@ data class VolumeUi(
     val supported: Boolean = true,
     val hasPermission: Boolean = false,
     val message: String? = null,
+    val debug: String? = null,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -146,8 +147,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setRight(value: Int) = setLevels(if (_volume.value.linked) value else _volume.value.left, value)
 
     private fun setLevels(left: Int, right: Int) {
-        val error = balance.apply(left, right)
-        _volume.update { it.copy(left = left, right = right, message = error) }
+        val result = balance.apply(left, right)
+        _volume.update { it.copy(left = left, right = right, message = result.error, debug = result.debug) }
     }
 
     fun setLinked(linked: Boolean) {

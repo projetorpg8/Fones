@@ -51,40 +51,71 @@ class BalanceController(private val context: Context) {
         }
     }
 
+    data class ApplyResult(val error: String?, val debug: String)
+
     /**
-     * Aplica níveis 0..100 para cada lado.
-     * @return null se deu certo, ou uma mensagem de erro para mostrar.
+     * Aplica níveis 0..100 para cada lado e devolve o que o sistema realmente fez,
+     * para a linha de diagnóstico da tela.
      */
-    fun apply(left: Int, right: Int, setVolume: Boolean = true): String? {
+    fun apply(left: Int, right: Int, setVolume: Boolean = true): ApplyResult {
         val l = left.coerceIn(0, 100)
         val r = right.coerceIn(0, 100)
         val top = max(l, r)
+        val dbg = StringBuilder()
+        var error: String? = null
 
         if (setVolume) {
             val maxIndex = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
             val minIndex = if (Build.VERSION.SDK_INT >= 28) audio.getStreamMinVolume(AudioManager.STREAM_MUSIC) else 0
             val index = (top / 100f * maxIndex).roundToInt().coerceIn(minIndex, maxIndex)
+            val before = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
             try {
-                audio.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+                if (index != before) {
+                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, index, AudioManager.FLAG_SHOW_UI)
+                }
             } catch (e: SecurityException) {
-                return "O sistema bloqueou a mudança de volume (modo Não perturbe?)"
+                error = "O sistema bloqueou a mudança de volume (modo Não perturbe?)"
+            }
+            val after = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
+            dbg.append("Volume mídia: pedido $index/$maxIndex, antes $before, agora $after")
+            if (error == null && after != index) {
+                error = "O Android não aceitou a mudança de volume (pedido $index, ficou $after)"
             }
         }
 
-        if (!isSupported) return "Volume por lado precisa de Android 10 ou mais novo"
-        if (!hasPermission()) return "Falta liberar a permissão pelo ADB (veja abaixo)"
+        dbg.append(" · modo de áudio ${modeName(audio.mode)}")
+
+        if (!isSupported) return ApplyResult(error ?: "Volume por lado precisa de Android 10 ou mais novo", dbg.toString())
+        if (!hasPermission()) {
+            dbg.append(" · balanço: sem permissão")
+            return ApplyResult(error ?: "Falta liberar a permissão pelo ADB (veja abaixo)", dbg.toString())
+        }
 
         val balance = when {
             top == 0 -> 0f
             r >= l -> 1f - l.toFloat() / r
             else -> -(1f - r.toFloat() / l)
         }
-        return try {
-            Settings.System.putFloat(context.contentResolver, KEY_MASTER_BALANCE, balance)
-            null
+        try {
+            val ok = Settings.System.putFloat(context.contentResolver, KEY_MASTER_BALANCE, balance)
+            val read = readBalance()
+            dbg.append(" · balanço: gravado %.2f (ok=%s), lido %.2f".format(balance, ok, read))
+            if (error == null && (!ok || kotlin.math.abs(read - balance) > 0.01f)) {
+                error = "O Android não aceitou o balanço esquerda/direita"
+            }
         } catch (e: Exception) {
-            "Não foi possível alterar o balanço: ${e.message}"
+            dbg.append(" · balanço: erro ${e.javaClass.simpleName}")
+            if (error == null) error = "Não foi possível alterar o balanço: ${e.message}"
         }
+        return ApplyResult(error, dbg.toString())
+    }
+
+    private fun modeName(mode: Int): String = when (mode) {
+        AudioManager.MODE_NORMAL -> "normal"
+        AudioManager.MODE_IN_CALL -> "em ligação"
+        AudioManager.MODE_IN_COMMUNICATION -> "comunicação (VoIP)"
+        AudioManager.MODE_RINGTONE -> "toque"
+        else -> mode.toString()
     }
 
     fun resetBalance() {
